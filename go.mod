@@ -5,6 +5,7 @@ go 1.24.0
 toolchain go1.24.12
 
 require (
+	fyne.io/systray v1.11.0
 	github.com/go-vgo/robotgo v1.0.0
 	github.com/robotn/gohook v0.42.3
 )

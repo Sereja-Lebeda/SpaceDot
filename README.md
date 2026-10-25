@@ -24,5 +24,10 @@ go mod tidy
 
 ## Сборка проекта
 
-Для работы файла в фоне следует применить:
-'go build -ldflags "-H windowsgui" -o double-space.exe'
+Программа работает в фоне с иконкой в системном трее (выход — правый клик по иконке → «Выход»).
+Чтобы при запуске не открывалось консольное окно, собирайте с флагом `-H windowsgui`:
+
+```bash
+go mod tidy
+go build -ldflags "-H windowsgui" -o doubleSpaceToDot.exe
+```
