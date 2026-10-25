@@ -21,8 +21,8 @@ func main() {
 
 func onReady() {
 	systray.SetIcon(iconData)
-	systray.SetTitle("Double Space → .")
-	systray.SetTooltip("Double Space → . + Space")
+	systray.SetTitle("SpaceDot")
+	systray.SetTooltip("SpaceDot — двойной пробел → . + пробел")
 
 	mQuit := systray.AddMenuItem("Выход", "Закрыть программу")
 

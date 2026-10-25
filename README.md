@@ -1,4 +1,6 @@
-# Double Space to Period (Windows)
+# SpaceDot
+
+Двойной пробел → точка (Windows).
 
 Простая утилита, которая превращает **два быстрых нажатия пробела** в **точку + пробел** — точно так же, как это работает на macOS и iOS при наборе текста.
 
@@ -29,5 +31,5 @@ go mod tidy
 
 ```bash
 go mod tidy
-go build -ldflags "-H windowsgui" -o doubleSpaceToDot.exe
+go build -ldflags "-H windowsgui" -o SpaceDot.exe
 ```
