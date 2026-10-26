@@ -52,8 +52,8 @@ func main() {
 		// ЛКМ по иконке → настройки; ПКМ по-прежнему открывает меню
 		systray.SetOnTapped(func() { fyne.Do(settings.show) })
 
-		whatsNewOnStart(a)
-		go autoUpdateLoop(a)
+		settings.whatsNewOnStart()
+		go settings.updateLoop()
 	})
 	a.Lifecycle().SetOnStopped(hook.End)
 	go listenKeys()
@@ -99,6 +99,7 @@ type settingsWindow struct {
 	autostart    *widget.Check
 	autoUpdate   *widget.Check
 	updateButton *widget.Button
+	update       *release // найденное, но ещё не установленное обновление
 }
 
 func newSettingsWindow(a fyne.App) *settingsWindow {
@@ -108,7 +109,8 @@ func newSettingsWindow(a fyne.App) *settingsWindow {
 	s.interval = newEntry()
 	s.autostart = widget.NewCheck("Запускать вместе с Windows", nil)
 	s.autoUpdate = widget.NewCheck("Обновлять автоматически", nil)
-	s.updateButton = widget.NewButton("Проверить обновления", s.checkUpdateManually)
+	s.updateButton = widget.NewButton("", s.onUpdateButton)
+	s.resetUpdateButton()
 
 	addRule := widget.NewButtonWithIcon("Добавить клавишу", theme.ContentAddIcon(), func() {
 		r := defaultRule()
@@ -157,11 +159,12 @@ func (s *settingsWindow) addRow(rule Rule) *ruleRow {
 		tripleText: newEntry(),
 	}
 	row.keyButton = widget.NewButton("", func() { s.startCapture(row) })
-	row.tripleEnabled = widget.NewCheck("Тройное нажатие", func(on bool) {
+	// Поле для тройного нажатия показываем только при включённой галочке
+	row.tripleEnabled = widget.NewCheck("", func(on bool) {
 		if on {
-			row.tripleText.Enable()
+			row.tripleText.Show()
 		} else {
-			row.tripleText.Disable()
+			row.tripleText.Hide()
 		}
 	})
 	remove := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() { s.removeRow(row) })
@@ -177,8 +180,7 @@ func (s *settingsWindow) addRow(rule Rule) *ruleRow {
 	form := widget.NewForm(
 		widget.NewFormItem("Клавиша", container.NewBorder(nil, nil, nil, remove, row.keyButton)),
 		widget.NewFormItem("Двойное нажатие →", row.doubleText),
-		widget.NewFormItem("", row.tripleEnabled),
-		widget.NewFormItem("Тройное нажатие →", row.tripleText),
+		widget.NewFormItem("Тройное нажатие →", container.NewBorder(nil, nil, row.tripleEnabled, nil, row.tripleText)),
 	)
 	row.box = widget.NewCard("", "", form)
 
