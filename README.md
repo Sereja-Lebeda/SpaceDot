@@ -8,6 +8,18 @@
 
 - Отслеживает нажатия пробела глобально (во всех приложениях).
 - Если два пробела нажаты подряд с интервалом менее 500 мс → удаляет эти два пробела и вставляет `. `.
+- Опционально: тройной пробел → свой текст (по умолчанию `! `).
+
+## Настройки
+
+Левый клик по иконке в трее (или правый клик → «Настройки») открывает окно настроек. Там можно:
+
+- назначить несколько клавиш («Добавить клавишу» → нажать нужную, Esc — отмена), по умолчанию — пробел;
+- для каждой клавиши задать текст для двойного и тройного нажатия;
+- задать общий интервал между нажатиями;
+- включить автозапуск вместе с Windows (запись в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
+
+ Настройки сохраняются в `%APPDATA%\SpaceDot\config.json`.
 
 ## Требования
 
@@ -21,6 +33,7 @@
 go mod init double-space-to-dot
 go get github.com/robotn/gohook
 go get github.com/go-vgo/robotgo
+go get fyne.io/fyne/v2
 go mod tidy
 ```
 
@@ -31,5 +44,5 @@ go mod tidy
 
 ```bash
 go mod tidy
-go build -ldflags "-H windowsgui" -o SpaceDot.exe
+go build -ldflags "-H windowsgui -s -w" -o SpaceDot.exe
 ```
