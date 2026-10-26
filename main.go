@@ -105,7 +105,7 @@ func newSettingsWindow(a fyne.App) *settingsWindow {
 	s := &settingsWindow{app: a, win: a.NewWindow("SpaceDot — настройки")}
 
 	s.rowsBox = container.NewVBox()
-	s.interval = widget.NewEntry()
+	s.interval = newEntry()
 	s.autostart = widget.NewCheck("Запускать вместе с Windows", nil)
 	s.autoUpdate = widget.NewCheck("Обновлять автоматически", nil)
 	s.updateButton = widget.NewButton("Проверить обновления", s.checkUpdateManually)
@@ -153,8 +153,8 @@ func newSettingsWindow(a fyne.App) *settingsWindow {
 
 func (s *settingsWindow) addRow(rule Rule) *ruleRow {
 	row := &ruleRow{
-		doubleText: widget.NewEntry(),
-		tripleText: widget.NewEntry(),
+		doubleText: newEntry(),
+		tripleText: newEntry(),
 	}
 	row.keyButton = widget.NewButton("", func() { s.startCapture(row) })
 	row.tripleEnabled = widget.NewCheck("Тройное нажатие", func(on bool) {
@@ -295,4 +295,12 @@ func (s *settingsWindow) save() {
 	if err := setAutostart(s.autostart.Checked); err != nil {
 		dialog.ShowError(err, s.win)
 	}
+}
+
+// newEntry — однострочное поле без собственной прокрутки: иначе колесо мыши
+// над полем «застревает» в нём, а не прокручивает окно настроек
+func newEntry() *widget.Entry {
+	e := widget.NewEntry()
+	e.Scroll = fyne.ScrollNone
+	return e
 }
