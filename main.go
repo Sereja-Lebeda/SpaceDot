@@ -51,9 +51,13 @@ func main() {
 
 		// ЛКМ по иконке → настройки; ПКМ по-прежнему открывает меню
 		systray.SetOnTapped(func() { fyne.Do(settings.show) })
+
+		whatsNewOnStart(a)
+		go autoUpdateLoop(a)
 	})
 	a.Lifecycle().SetOnStopped(hook.End)
 	go listenKeys()
+	go cleanupOldExe()
 
 	// a.Run блокирует главный поток до a.Quit()
 	a.Run()
@@ -85,21 +89,26 @@ func (r *ruleRow) rule() Rule {
 }
 
 type settingsWindow struct {
+	app fyne.App
 	win fyne.Window
 
-	rows      []*ruleRow
-	rowsBox   *fyne.Container
-	capturing *ruleRow // строка, ждущая нажатия клавиши
-	interval  *widget.Entry
-	autostart *widget.Check
+	rows         []*ruleRow
+	rowsBox      *fyne.Container
+	capturing    *ruleRow // строка, ждущая нажатия клавиши
+	interval     *widget.Entry
+	autostart    *widget.Check
+	autoUpdate   *widget.Check
+	updateButton *widget.Button
 }
 
 func newSettingsWindow(a fyne.App) *settingsWindow {
-	s := &settingsWindow{win: a.NewWindow("SpaceDot — настройки")}
+	s := &settingsWindow{app: a, win: a.NewWindow("SpaceDot — настройки")}
 
 	s.rowsBox = container.NewVBox()
 	s.interval = widget.NewEntry()
 	s.autostart = widget.NewCheck("Запускать вместе с Windows", nil)
+	s.autoUpdate = widget.NewCheck("Обновлять автоматически", nil)
+	s.updateButton = widget.NewButton("Проверить обновления", s.checkUpdateManually)
 
 	addRule := widget.NewButtonWithIcon("Добавить клавишу", theme.ContentAddIcon(), func() {
 		r := defaultRule()
@@ -115,6 +124,8 @@ func newSettingsWindow(a fyne.App) *settingsWindow {
 	common := widget.NewForm(
 		widget.NewFormItem("Интервал, мс", s.interval),
 		widget.NewFormItem("", s.autostart),
+		widget.NewFormItem("Версия "+version, s.autoUpdate),
+		widget.NewFormItem("", s.updateButton),
 	)
 
 	save := widget.NewButton("Сохранить", s.save)
@@ -238,6 +249,7 @@ func (s *settingsWindow) fill(cfg Config) {
 		s.addRow(r)
 	}
 	s.interval.SetText(strconv.Itoa(cfg.IntervalMs))
+	s.autoUpdate.SetChecked(cfg.AutoUpdate)
 }
 
 func (s *settingsWindow) show() {
@@ -259,7 +271,12 @@ func (s *settingsWindow) save() {
 	}
 	s.cancelCapture()
 
-	cfg := Config{Rules: []Rule{}, IntervalMs: ms}
+	cfg := Config{
+		Rules:           []Rule{},
+		IntervalMs:      ms,
+		AutoUpdate:      s.autoUpdate.Checked,
+		LastSeenVersion: currentConfig.Load().LastSeenVersion,
+	}
 	seen := map[uint16]bool{}
 	for _, row := range s.rows {
 		if seen[row.key] {

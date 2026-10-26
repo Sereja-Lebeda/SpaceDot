@@ -19,6 +19,9 @@ type Rule struct {
 type Config struct {
 	Rules      []Rule `json:"rules"`
 	IntervalMs int    `json:"interval_ms"` // макс. пауза между нажатиями
+
+	AutoUpdate      bool   `json:"auto_update"`       // ставить обновления с GitHub без вопросов
+	LastSeenVersion string `json:"last_seen_version"` // версия, для которой уже показали «Что нового»
 }
 
 func defaultRule() Rule {
