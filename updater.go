@@ -16,7 +16,7 @@ import (
 )
 
 // Текущая версия программы; при выпуске релиза тег на GitHub должен быть "v" + version
-const version = "1.1.1"
+const version = "1.1.2"
 
 const (
 	releasesAPI = "https://api.github.com/repos/Sereja-Lebeda/SpaceDot/releases"

@@ -278,7 +278,7 @@ func (s *settingsWindow) addRow(rule Rule) *ruleRow {
 	row.tripleText.OnChanged = func(string) { row.refreshSummary() }
 
 	form := widget.NewForm(
-		widget.NewFormItem("Сочетание", limitedWidth(row.keyButton, 360)),
+		widget.NewFormItem("Сочетание", limitedWidth(row.keyButton, 320)),
 		widget.NewFormItem("Двойное нажатие →", limitedWidth(row.doubleText, 320)),
 		widget.NewFormItem("Тройное нажатие →", limitedWidth(container.NewBorder(nil, nil, row.tripleEnabled, nil, row.tripleText), 360)),
 		widget.NewFormItem("Раскладка", limitedWidth(row.layout, 320)),
@@ -371,7 +371,16 @@ func (s *settingsWindow) show() {
 }
 
 func (s *settingsWindow) resetDefaults() {
-	s.fill(defaultConfig())
+	d := dialog.NewConfirm("Сбросить настройки?",
+		"Все изменения будут сброшены до настроек по умолчанию.\nДля применения сброса нажмите «Сохранить».",
+		func(confirmed bool) {
+			if confirmed {
+				s.fill(defaultConfig())
+			}
+		}, s.win)
+	d.SetConfirmText("Сбросить")
+	d.SetDismissText("Отмена")
+	d.Show()
 }
 
 func (s *settingsWindow) save() {
