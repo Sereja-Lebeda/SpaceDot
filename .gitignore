@@ -1,3 +1,5 @@
 *.exe.old
 *.exe.download
 .claude/settings.local.json
+SpaceDot-preview.exe
+.qa/

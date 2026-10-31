@@ -3,110 +3,95 @@ package main
 import (
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
-
-	"github.com/go-vgo/robotgo"
-	hook "github.com/robotn/gohook"
 )
-
-// Интервал короче этого — вероятно удержание/автоповтор, а не отдельное нажатие
-const minGap = 60 * time.Millisecond
 
 const vkEscape = 27
 
-// Если не nil — следующее нажатие не обрабатывается, а передаётся сюда (назначение клавиши в GUI).
-// Escape отменяет назначение и передаётся как 0.
-var captureKey atomic.Pointer[func(vk uint16)]
+var captureKey atomic.Pointer[func(vk uint16, shift bool)]
 
-func listenKeys() {
-	evChan := hook.Start()
+// Замена на отпускании: исходный символ уже доставлен приложению.
+func listenKeys(events <-chan keyEvent) {
+	processKeyEvents(events, foregroundContext, replaceText)
+}
 
-	var (
-		lastPressTime time.Time
-		seriesKey     uint16    // клавиша текущей серии
-		count         int       // сколько нажатий подряд в текущей серии
-		typed         int       // сколько символов серии сейчас стоит в тексте
-		suppressUntil time.Time // события до этого момента — наш собственный ввод
-	)
-
-	// replace стирает символы серии вместе с символом от последнего нажатия и вставляет text
-	replace := func(text string, perPress int) {
-		for i := 0; i < typed+perPress; i++ {
-			robotgo.KeyTap("backspace")
-			robotgo.MilliSleep(1)
-		}
-		// Вставляем текст надёжно, независимо от раскладки
-		robotgo.TypeStr(text)
-		typed = utf8.RuneCountInString(text)
-		suppressUntil = time.Now().Add(50 * time.Millisecond)
-	}
-
-	for ev := range evChan {
-		if ev.Kind != hook.KeyDown {
-			continue
-		}
-		// Наши же backspace и вставленный текст не должны сбрасывать серию
-		if ev.When.Before(suppressUntil) {
-			continue
-		}
-
-		if cb := captureKey.Swap(nil); cb != nil {
-			vk := ev.Rawcode
-			if vk == vkEscape {
-				vk = 0
+func processKeyEvents(events <-chan keyEvent, contextForInput func() inputContext, apply func(int, string) error) {
+	var sequence pressSequence
+	var previousConfig *Config
+	var down [256]*keyEvent
+	for ev := range events {
+		if ev.reset {
+			sequence.reset()
+			for _, press := range down {
+				if press != nil {
+					press.repeat = true
+				}
 			}
-			(*cb)(vk)
-			count = 0
 			continue
 		}
-
-		cfg := currentConfig.Load()
-		rule := cfg.ruleFor(ev.Rawcode)
-		if rule == nil {
-			// Клавиша без правила → сброс
-			count = 0
+		if ev.key >= 256 {
 			continue
 		}
-
-		// Клавиши вроде пробела печатают символ, который тоже надо стереть; Shift, CapsLock и т.п. — нет
-		perPress := 0
-		if keyTypesChar(rule.Key) {
-			perPress = 1
-		}
-
-		now := ev.When
-		gap := now.Sub(lastPressTime)
-
-		if count == 0 || ev.Rawcode != seriesKey || gap >= time.Duration(cfg.IntervalMs)*time.Millisecond {
-			count, typed = 1, perPress
-			seriesKey = ev.Rawcode
-			lastPressTime = now
-			continue
-		}
-
-		if gap <= minGap {
-			// Слишком быстро → вероятно удержание, просто обновляем время
-			lastPressTime = now
-			continue
-		}
-
-		lastPressTime = now
-		switch count {
-		case 1:
-			if rule.DoubleText != "" {
-				replace(rule.DoubleText, perPress)
+		if !ev.up {
+			if down[ev.key] != nil {
+				down[ev.key].repeat = true
+				sequence.reset()
 			} else {
-				typed += perPress
+				copy := ev
+				down[ev.key] = &copy
 			}
-			count = 2
-			if !rule.TripleEnabled {
-				count = 0
+			if cb := captureKey.Load(); cb != nil {
+				sequence.reset()
+				if isModifier(ev.key) || (ev.key != vkEscape && (!keyTypesChar(ev.key) || ev.blocked)) {
+					continue
+				}
+				if captureKey.CompareAndSwap(cb, nil) {
+					key := ev.key
+					if key == vkEscape {
+						key = 0
+					}
+					(*cb)(key, ev.shift)
+				}
+				down[ev.key].repeat = true
+				continue
 			}
-		case 2:
-			if rule.TripleText != "" {
-				replace(rule.TripleText, perPress)
+			if ev.blocked || (isModifier(ev.key) && ev.key != 0x10 && ev.key != 0xA0 && ev.key != 0xA1) || (!isModifier(ev.key) && !keyTypesChar(ev.key)) {
+				sequence.reset()
 			}
-			count = 0
+			if !isModifier(ev.key) && sequence.count != 0 && (ev.key != sequence.rule.Key || ev.shift != sequence.rule.Shift) {
+				sequence.reset()
+			}
+			continue
+		}
+		press := down[ev.key]
+		down[ev.key] = nil
+		if press == nil || isModifier(ev.key) {
+			continue
+		}
+		cfg := currentConfig.Load()
+		if cfg != previousConfig {
+			sequence.reset()
+			previousConfig = cfg
+		}
+		context := contextForInput()
+		if press.repeat || paused.Load() || ev.blocked || press.blocked || context.window == 0 || context.window != press.window || cfg.excludes(context.app) {
+			sequence.reset()
+			continue
+		}
+		rule := cfg.ruleForLayout(ev.key, press.shift, context.layout)
+		if rule == nil || !keyTypesChar(ev.key) {
+			sequence.reset()
+			continue
+		}
+		action := sequence.press(*rule, press.when, time.Duration(cfg.IntervalMs)*time.Millisecond, context)
+		if action.erase == 0 {
+			continue
+		}
+		if contextForInput() != context {
+			sequence.reset()
+			continue
+		}
+		if err := apply(action.erase, action.text); err != nil {
+			sequence.reset()
 		}
 	}
 }

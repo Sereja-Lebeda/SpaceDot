@@ -16,7 +16,7 @@ import (
 )
 
 // Текущая версия программы; при выпуске релиза тег на GitHub должен быть "v" + version
-const version = "1.0.2"
+const version = "1.1.0"
 
 const (
 	releasesAPI = "https://api.github.com/repos/Sereja-Lebeda/SpaceDot/releases"
@@ -223,7 +223,7 @@ func restart() error {
 	if err != nil {
 		return err
 	}
-	return exec.Command(exe).Start()
+	return exec.Command(exe, os.Args[1:]...).Start()
 }
 
 // cleanupOldExe удаляет файл, оставшийся от предыдущего обновления.

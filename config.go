@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 )
 
 // Rule — что вставлять при двойном/тройном нажатии одной клавиши
 type Rule struct {
+	Disabled      bool   `json:"disabled,omitempty"`
+	Layout        uint16 `json:"layout,omitempty"` // 0 — любая, иначе Windows LANGID
+	Shift         bool   `json:"shift,omitempty"`
 	Key           uint16 `json:"key"`            // virtual-key код клавиши (32 — пробел)
 	DoubleText    string `json:"double_text"`    // что вставить вместо двух нажатий ("" — ничего не делать)
 	TripleEnabled bool   `json:"triple_enabled"` // реагировать ли на третье нажатие
@@ -17,8 +21,9 @@ type Rule struct {
 
 // Config — пользовательские настройки, хранятся в %APPDATA%\SpaceDot\config.json
 type Config struct {
-	Rules      []Rule `json:"rules"`
-	IntervalMs int    `json:"interval_ms"` // макс. пауза между нажатиями
+	ExcludedApps []string `json:"excluded_apps,omitempty"`
+	Rules        []Rule   `json:"rules"`
+	IntervalMs   int      `json:"interval_ms"` // макс. пауза между нажатиями
 
 	AutoUpdate      bool   `json:"auto_update"`       // ставить обновления с GitHub без вопросов
 	LastSeenVersion string `json:"last_seen_version"` // версия, для которой уже показали «Что нового»
@@ -36,19 +41,45 @@ func defaultConfig() Config {
 }
 
 // ruleFor возвращает правило для клавиши или nil
-func (c *Config) ruleFor(vk uint16) *Rule {
+func (c *Config) ruleFor(vk uint16, shift bool) *Rule {
+	return c.ruleForLayout(vk, shift, 0)
+}
+
+func (c *Config) ruleForLayout(vk uint16, shift bool, layout uint16) *Rule {
+	var fallback *Rule
 	for i := range c.Rules {
-		if c.Rules[i].Key == vk {
-			return &c.Rules[i]
+		r := &c.Rules[i]
+		if r.Disabled || r.Key != vk || r.Shift != shift {
+			continue
+		}
+		if r.Layout != 0 && r.Layout == layout {
+			return r
+		}
+		if r.Layout == 0 {
+			fallback = r
 		}
 	}
-	return nil
+	return fallback
+}
+
+func (c *Config) excludes(app string) bool {
+	for _, excluded := range c.ExcludedApps {
+		if strings.EqualFold(strings.TrimSpace(excluded), app) {
+			return true
+		}
+	}
+	return false
 }
 
 // текущие настройки; читаются из горутины хука, пишутся из GUI
 var currentConfig atomic.Pointer[Config]
+var paused atomic.Bool
+var configOverride string
 
 func configPath() (string, error) {
+	if configOverride != "" {
+		return configOverride, nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -68,7 +99,9 @@ func loadConfig() Config {
 	}
 
 	cfg.Rules = nil
-	_ = json.Unmarshal(data, &cfg)
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return defaultConfig()
+	}
 	if cfg.Rules == nil {
 		// старый формат: одна клавиша прямо в корне конфига
 		legacy := defaultRule()
@@ -100,5 +133,22 @@ func saveConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	// Сначала полностью записываем новый файл, затем заменяем старый.
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
