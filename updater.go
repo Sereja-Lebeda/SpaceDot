@@ -16,7 +16,7 @@ import (
 )
 
 // Текущая версия программы; при выпуске релиза тег на GitHub должен быть "v" + version
-const version = "1.1.0"
+const version = "1.1.1"
 
 const (
 	releasesAPI = "https://api.github.com/repos/Sereja-Lebeda/SpaceDot/releases"
@@ -137,6 +137,10 @@ func installUpdate(r *release, progress func(done, total int64)) error {
 	if err != nil {
 		return err
 	}
+	return installUpdateAt(exe, r, progress)
+}
+
+func installUpdateAt(exe string, r *release, progress func(done, total int64)) error {
 	tmp := exe + ".download"
 	old := exe + ".old"
 

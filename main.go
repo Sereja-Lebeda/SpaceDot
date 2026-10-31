@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -73,6 +74,7 @@ func main() {
 		go settings.updateLoop()
 	})
 	go cleanupOldExe()
+	a.Lifecycle().SetOnStopped(func() { close(settings.updateStop) })
 
 	// a.Run блокирует главный поток до a.Quit()
 	a.Run()
@@ -91,6 +93,7 @@ type ruleRow struct {
 	tripleEnabled *widget.Check
 	tripleText    *widget.Entry
 	box           fyne.CanvasObject
+	details       *fyne.Container
 }
 
 func (r *ruleRow) setKey(vk uint16, shift bool) {
@@ -131,10 +134,15 @@ type settingsWindow struct {
 	pauseMenu    *fyne.MenuItem
 	trayMenu     *fyne.Menu
 	started      bool
+	updateStatus *widget.Label
+	updateWake   chan struct{}
+	updateStop   chan struct{}
+	updateBusy   atomic.Bool
 }
 
 func newSettingsWindow(a fyne.App) *settingsWindow {
-	s := &settingsWindow{app: a, win: a.NewWindow("SpaceDot — настройки")}
+	s := &settingsWindow{app: a, win: a.NewWindow("SpaceDot — настройки"),
+		updateWake: make(chan struct{}, 1), updateStop: make(chan struct{})}
 
 	s.rowsBox = container.NewVBox()
 	s.status = widget.NewLabel("Изменения применяются после сохранения")
@@ -146,6 +154,8 @@ func newSettingsWindow(a fyne.App) *settingsWindow {
 	s.excludedApps.SetPlaceHolder("Например: game.exe, WindowsTerminal.exe")
 	s.autostart = widget.NewCheck("Запускать вместе с Windows", nil)
 	s.autoUpdate = widget.NewCheck("Обновлять автоматически", nil)
+	s.updateStatus = widget.NewLabel("Проверка обновлений — через 10 секунд после запуска")
+	s.updateStatus.Wrapping = fyne.TextWrapWord
 	s.updateButton = widget.NewButton("", s.onUpdateButton)
 	s.resetUpdateButton()
 
@@ -161,11 +171,12 @@ func newSettingsWindow(a fyne.App) *settingsWindow {
 	hint.Wrapping = fyne.TextWrapWord
 
 	common := widget.NewForm(
-		widget.NewFormItem("Интервал, мс", s.interval),
-		widget.NewFormItem("Исключения", s.excludedApps),
+		widget.NewFormItem("Интервал, мс", limitedWidth(s.interval, 120)),
+		widget.NewFormItem("Исключения", limitedWidth(s.excludedApps, 420)),
 		widget.NewFormItem("", s.autostart),
 		widget.NewFormItem("Версия "+version, s.autoUpdate),
-		widget.NewFormItem("", s.updateButton),
+		widget.NewFormItem("", limitedWidth(s.updateButton, 320)),
+		widget.NewFormItem("", s.updateStatus),
 	)
 
 	save := widget.NewButton("Сохранить", s.save)
@@ -209,7 +220,23 @@ func (s *settingsWindow) addRow(rule Rule) *ruleRow {
 	}
 	row.summary = widget.NewLabel("")
 	row.summary.Wrapping = fyne.TextWrapWord
-	row.enabled = widget.NewCheck("Включено", func(bool) { row.refreshSummary() })
+	row.enabled = widget.NewCheck("Включено", func(on bool) {
+		if row.details != nil {
+			if on {
+				row.details.Show()
+			} else {
+				row.details.Hide()
+			}
+		}
+		if !on && s.capturing == row {
+			s.cancelCapture()
+		}
+		row.refreshSummary()
+		if row.box != nil {
+			row.box.Refresh()
+			s.rowsBox.Refresh()
+		}
+	})
 	row.enabled.SetChecked(!rule.Disabled)
 	options, codes := layoutChoices()
 	row.layoutCodes = codes
@@ -251,12 +278,16 @@ func (s *settingsWindow) addRow(rule Rule) *ruleRow {
 	row.tripleText.OnChanged = func(string) { row.refreshSummary() }
 
 	form := widget.NewForm(
-		widget.NewFormItem("Сочетание", row.keyButton),
-		widget.NewFormItem("Двойное нажатие →", row.doubleText),
-		widget.NewFormItem("Тройное нажатие →", container.NewBorder(nil, nil, row.tripleEnabled, nil, row.tripleText)),
-		widget.NewFormItem("Раскладка", row.layout),
+		widget.NewFormItem("Сочетание", limitedWidth(row.keyButton, 360)),
+		widget.NewFormItem("Двойное нажатие →", limitedWidth(row.doubleText, 320)),
+		widget.NewFormItem("Тройное нажатие →", limitedWidth(container.NewBorder(nil, nil, row.tripleEnabled, nil, row.tripleText), 360)),
+		widget.NewFormItem("Раскладка", limitedWidth(row.layout, 320)),
 	)
-	row.box = widget.NewCard("", "", container.NewVBox(container.NewBorder(nil, nil, row.enabled, remove, row.summary), widget.NewSeparator(), form))
+	row.details = container.NewVBox(widget.NewSeparator(), form)
+	if rule.Disabled {
+		row.details.Hide()
+	}
+	row.box = widget.NewCard("", "", container.NewVBox(container.NewBorder(nil, nil, row.enabled, remove, row.summary), row.details))
 	row.refreshSummary()
 
 	s.rows = append(s.rows, row)
@@ -392,6 +423,10 @@ func (s *settingsWindow) save() {
 		return
 	}
 	currentConfig.Store(&cfg)
+	// Сохранение включённого автообновления сразу будит проверку.
+	if cfg.AutoUpdate {
+		s.requestUpdateCheck()
+	}
 	if s.autostart.Checked != autostartEnabled() {
 		if err := setAutostart(s.autostart.Checked); err != nil {
 			dialog.ShowError(err, s.win)
@@ -413,9 +448,9 @@ func (r *ruleRow) refreshSummary() {
 	if r.doubleText.Text != "" {
 		result = strconv.Quote(r.doubleText.Text)
 	}
-	prefix := ""
 	if !r.enabled.Checked {
-		prefix = "Выключено · "
+		r.summary.SetText(name)
+		return
 	}
 	if r.layout != nil && r.layout.SelectedIndex() > 0 {
 		result += " · " + r.layout.Selected
@@ -423,7 +458,7 @@ func (r *ruleRow) refreshSummary() {
 	if r.tripleEnabled != nil && r.tripleEnabled.Checked {
 		result += " · ×3 → " + strconv.Quote(r.tripleText.Text)
 	}
-	r.summary.SetText(prefix + name + " ×2 → " + result)
+	r.summary.SetText(name + " ×2 → " + result)
 }
 
 func (s *settingsWindow) togglePause() {
